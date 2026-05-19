@@ -1,0 +1,90 @@
+name: Build y Deploy APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:       # permite ejecutarlo manualmente desde GitHub
+
+jobs:
+  build-and-deploy:
+    name: Build APK y subir al VPS
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ── 1. Clonar el repositorio ───────────────────────────────
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      # ── 2. Instalar Flutter ────────────────────────────────────
+      - name: Instalar Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.0'
+          channel: 'stable'
+          cache: true
+
+      # ── 3. Instalar dependencias ───────────────────────────────
+      - name: flutter pub get
+        run: flutter pub get
+
+      # ── 4. Compilar APK release ────────────────────────────────
+      - name: Build APK release
+        run: flutter build apk --release
+
+      # ── 5. Renombrar APK con versión y fecha ───────────────────
+      - name: Renombrar APK
+        run: |
+          FECHA=$(date +'%Y%m%d_%H%M')
+          cp build/app/outputs/flutter-apk/app-release.apk \
+             build/app/outputs/flutter-apk/salonapp-${FECHA}.apk
+          echo "APK_FECHA=salonapp-${FECHA}.apk" >> $GITHUB_ENV
+
+      # ── 6. Guardar APK como artefacto descargable en GitHub ────
+      - name: Subir APK como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-release
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
+
+      # ── 7. Copiar APK al VPS via SCP ──────────────────────────
+      - name: Deploy APK al VPS
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          # Crear archivo de clave SSH temporal
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          # Evitar prompt de host desconocido
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+
+          # Copiar APK al servidor
+          scp -i ~/.ssh/deploy_key \
+              build/app/outputs/flutter-apk/app-release.apk \
+              "$VPS_USER@$VPS_HOST:/home/$VPS_USER/app-release.apk"
+
+          # Mover a la carpeta web para descarga pública
+          ssh -i ~/.ssh/deploy_key "$VPS_USER@$VPS_HOST" \
+            "sudo mv /home/$VPS_USER/app-release.apk /var/www/salonapp/app-release.apk && \
+             sudo chown www-data:www-data /var/www/salonapp/app-release.apk"
+
+          # Limpiar clave temporal
+          rm ~/.ssh/deploy_key
+
+      # ── 8. Notificación en el resumen del workflow ─────────────
+      - name: Resumen del deploy
+        run: |
+          echo "## ✅ Deploy completado" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Campo | Valor |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| APK | \`app-release.apk\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Servidor | \`${{ secrets.VPS_HOST }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| URL descarga | \`http://${{ secrets.VPS_HOST }}/app-release.apk\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Rama | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
