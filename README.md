@@ -1,6 +1,6 @@
 # Salon Mapa — Flutter App
 
-Mapa interactivo para buscar salones de fiestas cercanos conectado a la API REST.
+Mapa interactivo para buscar salones de fiestas cercanos conectado a la API REST. Prueba Maxi!
 
 ## Requisitos
 
